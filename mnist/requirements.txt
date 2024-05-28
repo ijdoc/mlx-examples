@@ -1,2 +1,4 @@
 mlx>=0.2
 numpy
+wandb
+wandb-core

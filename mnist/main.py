@@ -8,9 +8,11 @@ import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
 import numpy as np
+import wandb
 
 import mnist
 
+wandb.require("core")  # Use the next generation W&B client
 
 class MLP(nn.Module):
     """A simple MLP."""
@@ -43,15 +45,22 @@ def batch_iterate(batch_size, X, y):
 
 
 def main(args):
-    seed = 0
-    num_layers = 2
-    hidden_dim = 32
-    num_classes = 10
-    batch_size = 256
-    num_epochs = 10
-    learning_rate = 1e-1
+    config = {
+        "seed": 0,
+        "num_layers": 2,
+        "hidden_dim": 32,
+        "num_classes": 10,
+        "batch_size": 256,
+        "num_epochs": 10,
+        "learning_rate": 1e-1,
+        "gpu": args.gpu,
+        "dataset": args.dataset,
+    }
 
-    np.random.seed(seed)
+    np.random.seed(config["seed"])
+
+    # Initialize wandb
+    wandb.init(project="mlx-mnist-test", config=config)
 
     # Load the data
     train_images, train_labels, test_images, test_labels = map(
@@ -59,10 +68,15 @@ def main(args):
     )
 
     # Load the model
-    model = MLP(num_layers, train_images.shape[-1], hidden_dim, num_classes)
+    model = MLP(
+        config["num_layers"],
+        train_images.shape[-1],
+        config["hidden_dim"],
+        config["num_classes"],
+    )
     mx.eval(model.parameters())
 
-    optimizer = optim.SGD(learning_rate=learning_rate)
+    optimizer = optim.SGD(learning_rate=config["learning_rate"])
     loss_and_grad_fn = nn.value_and_grad(model, loss_fn)
 
     @partial(mx.compile, inputs=model.state, outputs=model.state)
@@ -75,17 +89,27 @@ def main(args):
     def eval_fn(X, y):
         return mx.mean(mx.argmax(model(X), axis=1) == y)
 
-    for e in range(num_epochs):
+    for e in range(config["num_epochs"]):
         tic = time.perf_counter()
-        for X, y in batch_iterate(batch_size, train_images, train_labels):
-            step(X, y)
+        total_loss = 0
+        num_batches = 0
+        for X, y in batch_iterate(config["batch_size"], train_images, train_labels):
+            loss = step(X, y)
             mx.eval(model.state)
+            total_loss += loss.item()
+            num_batches += 1
+        avg_loss = total_loss / num_batches
         accuracy = eval_fn(test_images, test_labels)
         toc = time.perf_counter()
+        wandb.log(
+            {"loss": avg_loss, "accuracy": accuracy.item(), "epoch_time": toc - tic}
+        )
         print(
             f"Epoch {e}: Test accuracy {accuracy.item():.3f},"
             f" Time {toc - tic:.3f} (s)"
         )
+
+    wandb.finish()
 
 
 if __name__ == "__main__":
